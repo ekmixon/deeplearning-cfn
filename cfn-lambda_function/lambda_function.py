@@ -24,15 +24,11 @@ ASGInstanceCount = collections.namedtuple('ASGInstanceCount', ['min', 'desired',
 def lambda_handler(event, context):
     # print("Received event: " + json.dumps(event, indent=2))
     message = json.loads(event['Records'][0]['Sns']['Message'])
-    # print("From SNS: " + event['Records'][0]['Sns']['Message'])
-    # print('AWS_STACK_ID: ' + os.environ['AWS_STACK_ID'])
-    if message['Event']:
-        print('EVENT: ', message['Event'])
-        return eval(get_handler(message['Event']))(message)
-    else:
+    if not message['Event']:
         return do_nothing(message)
 
-    return message
+    print('EVENT: ', message['Event'])
+    return eval(get_handler(message['Event']))(message)
 
 def get_handler(Event):
     return {
@@ -45,7 +41,7 @@ def get_handler(Event):
 
 def do_nothing(message):
     print('do_nothing')
-    print("Unknown Event. Received message: " + json.dumps(message, indent=2))
+    print(f"Unknown Event. Received message: {json.dumps(message, indent=2)}")
     return
 
 def send_asg_success(status, asg, asg_instance_counts):

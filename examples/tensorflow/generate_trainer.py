@@ -21,20 +21,18 @@ def get_worker_list(nodes, gpu_per_node):
     for node in nodes:
         for index in range(gpu_per_node):
             port = str(2230 + (index%gpu_per_node))
-            lst.append( node + ":" + port )
+            lst.append(f"{node}:{port}")
     return ','.join(lst)
 
 # generates a list of parameter servers
 # one parameter server per node
 def get_ps_list(nodes):
-    return ','.join( [n + ":2222" for n in nodes] )
+    return ','.join([f"{n}:2222" for n in nodes])
 
 #creates list of commands that has to be run on each node
 def get_script(training_script, workers_list, ps_list, index, gpu_per_node, log_dir):
    
-    script = 'source /etc/profile'
-    script += "\n\n"
-
+    script = 'source /etc/profile' + "\n\n"
     script += "CUDA_VISIBLE_DEVICES='' python " + training_script + " " \
                 + "--ps_hosts=" + ps_list + " " \
                 + "--worker_hosts=" + workers_list + " " \
@@ -43,7 +41,7 @@ def get_script(training_script, workers_list, ps_list, index, gpu_per_node, log_
                 + " > " + log_dir + "/ps" + str(index) \
                 + " 2>&1" \
                 + " &" 
-                
+
     script += "\n\n"
 
     for i in range(gpu_per_node):    
@@ -56,22 +54,22 @@ def get_script(training_script, workers_list, ps_list, index, gpu_per_node, log_
                     + " > "+ log_dir + "/worker" + str(index*gpu_per_node + i) \
                     + " 2>&1" \
                     + " &"
-                
+
         script += "\n\n"
-    
+
     return script    
 
 def gen_scripts(training_script, nodes_file, trainer_script_dir, num_nodes, gpu_per_node, log_dir):
 
     with open(nodes_file, 'r') as f:
         nodes = f.read().splitlines()
-    
+
     workers_list = get_worker_list(nodes, gpu_per_node)
     ps_list = get_ps_list(nodes)
 
     for index, host in enumerate(nodes):
         script = get_script(training_script, workers_list, ps_list, index, gpu_per_node, log_dir)
-        file_name = trainer_script_dir + "/" + host + ".sh"
+        file_name = f"{trainer_script_dir}/{host}.sh"
         with open(file_name, "w") as sh_file:
             sh_file.write(script)
 

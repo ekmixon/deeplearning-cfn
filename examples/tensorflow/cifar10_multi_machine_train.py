@@ -5,7 +5,10 @@ from __future__ import print_function
 from datetime import datetime
 import sys
 import os.path
-sys.path.insert(0, os.path.dirname(__file__) + '/models/tutorials/image/cifar10/')
+sys.path.insert(
+    0, f'{os.path.dirname(__file__)}/models/tutorials/image/cifar10/'
+)
+
 
 import cifar10
 import re

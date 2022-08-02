@@ -54,7 +54,7 @@ Setup Logger and LogLevel
 '''
 def setup_logging(log_loc='/var/log'):
 
-    log_file = '{}/dl_cfn_setup.log'.format(log_loc)
+    log_file = f'{log_loc}/dl_cfn_setup.log'
     LOGGER = logging.getLogger('dl-cfn-setup')
     LOGGER.setLevel(logging.INFO)
     formatter = logging.Formatter('%(asctime)s %(levelname)s: %(filename)s:%(lineno)d %(message)s')
@@ -69,7 +69,7 @@ def setup_logging(log_loc='/var/log'):
     return LOGGER
 
 def ping_host(hostname):
-    res = os.system("ping -c 1 -w 10 " + hostname)
+    res = os.system(f"ping -c 1 -w 10 {hostname}")
     return res == 0
 
 def get_gpu_count():
@@ -77,41 +77,38 @@ def get_gpu_count():
 
     instance_type = boto.utils.get_instance_metadata()['instance-type']
     if instance_type not in AWS_GPU_INSTANCE_TYPES:
-        LOGGER.info('Not a GPU Instance, number of GPUs: {}'.format(0))
+        LOGGER.info('Not a GPU Instance, number of GPUs: 0')
         return 0
     try:
         output = subprocess.check_output(['nvidia-smi', '-L'])
         gpu_count = output.count('\n')
-        LOGGER.info("number of GPUs:{}".format(gpu_count))
+        LOGGER.info(f"number of GPUs:{gpu_count}")
         return gpu_count
     except subprocess.CalledProcessError as e:
-        LOGGER.exception("Error executing nvidia-smi: {}".format(e))
+        LOGGER.exception(f"Error executing nvidia-smi: {e}")
         return 0
 
 def setup_env_variables(master_instance_ip, worker_instance_ips, default_user, efs_mount):
     LOGGER.info("setup_env_variables")
 
     with open(HOST_FILE, 'a') as hosts, open(WORKER_FILE, 'w+') as w:
-        hosts.write("{} deeplearning-master\n".format(master_instance_ip))
-        worker_index=1
-        for worker_ip in worker_instance_ips:
-            hosts.write("{} deeplearning-worker{}\n".format(worker_ip, worker_index) )
-            w.write("deeplearning-worker{}\n".format(worker_index))
-            worker_index += 1
-
+        hosts.write(f"{master_instance_ip} deeplearning-master\n")
+        for worker_index, worker_ip in enumerate(worker_instance_ips, start=1):
+            hosts.write(f"{worker_ip} deeplearning-worker{worker_index}\n")
+            w.write(f"deeplearning-worker{worker_index}\n")
     gpu_count = get_gpu_count()
     with open("/etc/profile.d/deeplearning.sh", "a") as f:
-        num_workers = sum(1 for line in open(WORKER_FILE, "r"))
-        f.write("export DEEPLEARNING_WORKERS_COUNT={}\n".format(num_workers))
-        f.write("export DEEPLEARNING_WORKERS_PATH={}\n".format(WORKER_FILE))
-        f.write("export DEEPLEARNING_WORKER_GPU_COUNT={}\n".format(gpu_count))
-        f.write("export EFS_MOUNT={}\n".format(efs_mount))
-    
+        num_workers = sum(1 for _ in open(WORKER_FILE, "r"))
+        f.write(f"export DEEPLEARNING_WORKERS_COUNT={num_workers}\n")
+        f.write(f"export DEEPLEARNING_WORKERS_PATH={WORKER_FILE}\n")
+        f.write(f"export DEEPLEARNING_WORKER_GPU_COUNT={gpu_count}\n")
+        f.write(f"export EFS_MOUNT={efs_mount}\n")
+
     #change ownership to ec2-user
     uid = pwd.getpwnam(default_user).pw_uid
     gid = grp.getgrnam(default_user).gr_gid
     os.chown(WORKER_FILE, uid, gid)
-    
+
     return
 
 '''
@@ -120,32 +117,44 @@ message will be of the format
 {"min": 1, "desired": 1, "max": 1, "launched": 1, "status": "success", "asg": "cfn-test-WorkerAutoScalingGroup-1HPKVL6PJEVQS", "event": "asg-setup"}
 '''
 def wait_until_asg_success(master_queue_name, region, timeout):
-    LOGGER.info('wait_until_asg_success on queue_name:{}, timeout:{}'.format(master_queue_name, timeout))
+    LOGGER.info(
+        f'wait_until_asg_success on queue_name:{master_queue_name}, timeout:{timeout}'
+    )
+
     sqs_con = boto.sqs.connect_to_region(region_name=region)
     sqs_queue = sqs_con.get_queue(queue_name = master_queue_name)
     asg_success_message = {}
 
     start_time = time.time()
     next_execution_ts = start_time
-    
+
     while True:
-        LOGGER.info('checking autoscaling group success message at {}'.format(datetime.datetime.now()))
+        LOGGER.info(
+            f'checking autoscaling group success message at {datetime.datetime.now()}'
+        )
+
 
         recvd_messages = sqs_con.receive_message(queue=sqs_queue,number_messages=10, visibility_timeout=60)
-        LOGGER.info('number of messages received: {}'.format(len(recvd_messages)))
+        LOGGER.info(f'number of messages received: {len(recvd_messages)}')
         for msg in recvd_messages:
             msg_body = msg.get_body()
-            LOGGER.info('received message with body:{}'.format(msg_body))
+            LOGGER.info(f'received message with body:{msg_body}')
             try:
                 content = json.loads(msg_body)
                 if content is not None and content['event'] == 'asg-setup' and content['status'] == 'success':
                     # http://docs.aws.amazon.com/AWSSimpleQueueService/latest/SQSDeveloperGuide/standard-queues.html#standard-queues-at-least-once-delivery
                     # ignore duplicate message
                     if content['asg'] not in asg_success_message:
-                        LOGGER.info('autosclaing_group: {} succeeded at {}'.format(content['asg'], datetime.datetime.now()))
+                        LOGGER.info(
+                            f"autosclaing_group: {content['asg']} succeeded at {datetime.datetime.now()}"
+                        )
+
                         asg_success_message[content['asg']] = content
                     else:
-                        LOGGER.info('received duplicate sqs message for {} at {}'.format(content['asg'], datetime.datetime.now()))
+                        LOGGER.info(
+                            f"received duplicate sqs message for {content['asg']} at {datetime.datetime.now()}"
+                        )
+
                 sqs_con.delete_message(queue=sqs_queue, message=msg)
             except (TypeError, KeyError) as e:
                 LOGGER.exception(e)
@@ -158,39 +167,44 @@ def wait_until_asg_success(master_queue_name, region, timeout):
 
         next_execution_ts = next_execution_ts + SLEEP_INTERVAL_IN_SECS
         if (next_execution_ts > (start_time + timeout)):
-            LOGGER.info('timeout while checking asg status after {} seconds'.format(timeout))
+            LOGGER.info(f'timeout while checking asg status after {timeout} seconds')
             break
-        
-        LOGGER.info('not received all autoscaling group success at {}, WAITING :{}'.format(datetime.datetime.now(), SLEEP_INTERVAL_IN_SECS))
+
+        LOGGER.info(
+            f'not received all autoscaling group success at {datetime.datetime.now()}, WAITING :{SLEEP_INTERVAL_IN_SECS}'
+        )
+
         time.sleep(next_execution_ts - time.time())
 
     return asg_success_message
 
 def wait_for_worker_setup_message(worker_queue_name, timeout, region):
-    LOGGER.info('wait_for_worker_setup_message, worker_queue_name:{}, timeout:{}'.format(worker_queue_name, timeout))
+    LOGGER.info(
+        f'wait_for_worker_setup_message, worker_queue_name:{worker_queue_name}, timeout:{timeout}'
+    )
+
     sqs_con = boto.sqs.connect_to_region(region_name=region)
     sqs_queue = sqs_con.get_queue(queue_name = worker_queue_name)
 
     start_time = time.time()
     next_execution_ts = start_time
-    
+
     while True:
-        LOGGER.info('checking for worker_setup message at {}'.format(datetime.datetime.now()))
+        LOGGER.info(f'checking for worker_setup message at {datetime.datetime.now()}')
         #visibility_timeout is set to 0, so that other workers can simultaneously act on this message
         recvd_messages = sqs_con.receive_message(queue=sqs_queue,number_messages=10, visibility_timeout=0)
-        LOGGER.info('number of messages received: {}'.format(len(recvd_messages)))
+        LOGGER.info(f'number of messages received: {len(recvd_messages)}')
         for msg in recvd_messages:
             msg_body = msg.get_body()
-            LOGGER.info('received message with body:{}'.format(msg_body))
+            LOGGER.info(f'received message with body:{msg_body}')
             try:
                 content = json.loads(msg_body)
-                if content is not None and content['event'] == 'worker-setup':
-                    LOGGER.info('received worker-setup success message: {}'.format(content))
-                    # do not delete the message, other workers need to consume this.
-                    return content['master-ip'], content['worker-ips']
-                else:
+                if content is None or content['event'] != 'worker-setup':
                     #don't act on other messages
                     continue
+                LOGGER.info(f'received worker-setup success message: {content}')
+                # do not delete the message, other workers need to consume this.
+                return content['master-ip'], content['worker-ips']
             except (TypeError, KeyError) as e:
                 LOGGER.error(e)
                 LOGGER.error(msg)
@@ -198,16 +212,25 @@ def wait_for_worker_setup_message(worker_queue_name, timeout, region):
 
         next_execution_ts = next_execution_ts + SLEEP_INTERVAL_IN_SECS
         if (next_execution_ts > (start_time + timeout)):
-            LOGGER.info('did not receive worker-setup success even after {} seconds'.format(timeout))
+            LOGGER.info(
+                f'did not receive worker-setup success even after {timeout} seconds'
+            )
+
             return None        
-        
-        LOGGER.info('worker setup not complete is not complete at {}'.format(datetime.datetime.now()))
+
+        LOGGER.info(
+            f'worker setup not complete is not complete at {datetime.datetime.now()}'
+        )
+
         time.sleep(next_execution_ts - time.time())
 
     return None
 
 def wait_until_instances_active(autoscaling_groups, timeout, region):
-    LOGGER.info('wait_until_instances_active, asgs:{}, timeout:{}'.format(autoscaling_groups, timeout))
+    LOGGER.info(
+        f'wait_until_instances_active, asgs:{autoscaling_groups}, timeout:{timeout}'
+    )
+
 
     autoscale_con = boto.ec2.autoscale.connect_to_region(region_name=region)
     ec2_con = boto.ec2.connect_to_region(region_name=region)
@@ -224,23 +247,30 @@ def wait_until_instances_active(autoscaling_groups, timeout, region):
         groups = autoscale_con.get_all_groups(names=autoscaling_groups)
 
         for asg in groups:
-            instance_ids=[]
-            for instance in asg.instances:
-                if instance.health_status == 'Healthy':
-                    instance_ids.append(instance.instance_id)
+            instance_ids = [
+                instance.instance_id
+                for instance in asg.instances
+                if instance.health_status == 'Healthy'
+            ]
 
             if 'master' in asg.name.lower():
                 master_instance_ids.extend(instance_ids)
             else:
                 worker_instance_ids.extend(instance_ids)
-                LOGGER.info('from autoscale, found instances:{} for asg:{}'.format(instance_ids, asg.name))
+                LOGGER.info(
+                    f'from autoscale, found instances:{instance_ids} for asg:{asg.name}'
+                )
 
-        LOGGER.info('worker_asg_instane_ids:{}, master_ids:{}'.format(worker_instance_ids, master_instance_ids))
+
+        LOGGER.info(
+            f'worker_asg_instane_ids:{worker_instance_ids}, master_ids:{master_instance_ids}'
+        )
+
         next_token = None
         pending_instance_ids = master_instance_ids + worker_instance_ids
 
-        while(True):
-            LOGGER.info('getting ec2 instance info:{}'.format(pending_instance_ids))
+        while True:
+            LOGGER.info(f'getting ec2 instance info:{pending_instance_ids}')
             reservations = ec2_con.get_all_reservations(instance_ids = pending_instance_ids, next_token = next_token)
             next_token = reservations.next_token
 
@@ -248,32 +278,47 @@ def wait_until_instances_active(autoscaling_groups, timeout, region):
                 for i in r.instances:
                     if i.state.lower() == 'running':
                         if i.id in master_instance_ids:
-                            LOGGER.info('master instance in running state, id:{}, ip:{}'.format(i.id, i.private_ip_address))
+                            LOGGER.info(
+                                f'master instance in running state, id:{i.id}, ip:{i.private_ip_address}'
+                            )
+
                             master_instances[i.id] = i.private_ip_address
                         elif i.id in worker_instance_ids:
-                            LOGGER.info('worker instance in running state, id:{}, ip:{}'.format(i.id, i.private_ip_address))
+                            LOGGER.info(
+                                f'worker instance in running state, id:{i.id}, ip:{i.private_ip_address}'
+                            )
+
                             worker_instances[i.id] = i.private_ip_address
-                            LOGGER.info('worker:{}'.format(worker_instances))
+                            LOGGER.info(f'worker:{worker_instances}')
                         pending_instance_ids.remove(i.id)
                     elif i.state.lower() == 'pending':
-                        LOGGER.info('instance is still in pending state, instance id:{}'.format(i.id))
+                        LOGGER.info(f'instance is still in pending state, instance id:{i.id}')
                         continue
-            
+
             next_execution_ts = next_execution_ts + SLEEP_INTERVAL_IN_SECS
             if (len(pending_instance_ids) == 0):
-                LOGGER.info('received info of all instances, master: {}, worker: {}'.format(master_instances, worker_instances))
+                LOGGER.info(
+                    f'received info of all instances, master: {master_instances}, worker: {worker_instances}'
+                )
+
                 break
             elif (next_token is not None):
                 LOGGER.info('next_token is not None, will continue fetching more instances')
                 continue
-            elif (next_execution_ts < start_time + timeout):
-                LOGGER.error('Reached timeout, pending_instance_ids:{}, next_token:{}'.format(pending_instance_ids, next_token))
-                break                
+            elif next_execution_ts < start_time + timeout:
+                LOGGER.error(
+                    f'Reached timeout, pending_instance_ids:{pending_instance_ids}, next_token:{next_token}'
+                )
+
+                break
             else:
-                LOGGER.info('not all instance info is available, pending: {}, waiting for {} seconds'.format(pending_instance_ids, SLEEP_INTERVAL_IN_SECS))
+                LOGGER.info(
+                    f'not all instance info is available, pending: {pending_instance_ids}, waiting for {SLEEP_INTERVAL_IN_SECS} seconds'
+                )
+
                 time.sleep(next_execution_ts - time.time())
-            
-        LOGGER.info('master: {}, worker: {}'.format(master_instances, worker_instances))
+
+        LOGGER.info(f'master: {master_instances}, worker: {worker_instances}')
         return master_instances, worker_instances
     except Exception as e:
         LOGGER.exception(e)
@@ -287,7 +332,7 @@ def send_cfn_success_signal(stack_id, wait_handle_url, aws_region):
         instance_id = boto.utils.get_instance_metadata()['instance-id']
         command_args = ['/opt/aws/bin/cfn-signal', '--region', aws_region, '--stack', \
         stack_id, '--success', 'true', '--id', instance_id, wait_handle_url]
-        LOGGER.info('cfn-signal command: {}'.format(' '.join(map(str, command_args))))
+        LOGGER.info(f"cfn-signal command: {' '.join(map(str, command_args))}")
         output = subprocess.check_output(command_args)
         LOGGER.info(output)
     except subprocess.CalledProcessError as e:
@@ -305,13 +350,16 @@ def setup_worker_metadata(setup_timeout, master_queue_name, stack_id, region):
     start_time = time.time()
     asg_setup_messages = wait_until_asg_success(master_queue_name, region, setup_timeout)
     if len(asg_setup_messages) is not 2:
-        LOGGER.error('did not receive asg success message for all autoscaling_groups, received only: {}'.format(asg_setup_messages))
+        LOGGER.error(
+            f'did not receive asg success message for all autoscaling_groups, received only: {asg_setup_messages}'
+        )
+
         sys.exit(1)
 
     master_asg_message = None
     worker_asg_message = None
     for key, value in asg_setup_messages.iteritems():
-        LOGGER.info('asg success message:{}'.format(value))
+        LOGGER.info(f'asg success message:{value}')
         if 'master' in key.lower():
             master_asg_message = value
         else:
@@ -321,46 +369,59 @@ def setup_worker_metadata(setup_timeout, master_queue_name, stack_id, region):
     start_time = time.time()
 
     (master_instances, worker_instances) = wait_until_instances_active([master_asg_message['asg'], worker_asg_message['asg']], timeout, region)
-    LOGGER.info('from wait_until_instances_active, master: {}, worker:{}'.format(master_instances, worker_instances))
+    LOGGER.info(
+        f'from wait_until_instances_active, master: {master_instances}, worker:{worker_instances}'
+    )
+
     if (len(master_instances) != 1):
         LOGGER.error('expected single master, instead got instance ips:{}', master_instances)
         sys.exit(1)
     master_instance_ip = master_instances.values()[0]
     worker_instance_ips = [master_instance_ip]
-    
+
     if len(worker_instances) is 0:
         LOGGER.info('no worker is launched, using only master instance as worker')
     else:
         worker_instance_ips.extend(worker_instances.values())        
-        
+
         if (len(worker_instances) != worker_asg_message['launched']):
-            LOGGER.error('expected {} number of instances to be running, instead got instance_ids: {}, ips: {}' \
-            .format(worker_asg_message['launched'], worker_instances.keys(), worker_instances.values()) )
-        
+            LOGGER.error(
+                f"expected {worker_asg_message['launched']} number of instances to be running, instead got instance_ids: {worker_instances.keys()}, ips: {worker_instances.values()}"
+            )
+
+
     worker_instance_ips = sorted(worker_instance_ips)
 
     return master_instance_ip, worker_instance_ips
 
 def send_worker_setup_msg(worker_queue_name, master_instance_ip, worker_instance_ips, region):
-    LOGGER.info('send_worker_setup_msg:{}'.format(send_worker_setup_msg))
-    
+    LOGGER.info(f'send_worker_setup_msg:{send_worker_setup_msg}')
+
     sqs_con = boto.sqs.connect_to_region(region_name=region)
     sqs_queue = sqs_con.get_queue(queue_name = worker_queue_name)
 
-    worker_setup_message={'event' : 'worker-setup'}
-    worker_setup_message['master-ip'] = master_instance_ip
-    worker_setup_message['worker-ips'] = worker_instance_ips
+    worker_setup_message = {
+        'event': 'worker-setup',
+        'master-ip': master_instance_ip,
+        'worker-ips': worker_instance_ips,
+    }
 
-    LOGGER.info('sending worker-setup message:{}'.format(json.dumps(worker_setup_message)))
+    LOGGER.info(f'sending worker-setup message:{json.dumps(worker_setup_message)}')
     sqs_con.send_message(queue=sqs_queue, message_content=json.dumps(worker_setup_message))
 
 def check_instance_role_availability(role_name, timeout):
-    LOGGER.info('check_instance_role_availability, role_name:{}, timeout: {}'.format(role_name, timeout))
+    LOGGER.info(
+        f'check_instance_role_availability, role_name:{role_name}, timeout: {timeout}'
+    )
+
 
     start_time = time.time()
     next_execution_ts = start_time
     while True:
-        LOGGER.info('checking presence of instance role: {}, @ :{}'.format(role_name, datetime.datetime.now()))
+        LOGGER.info(
+            f'checking presence of instance role: {role_name}, @ :{datetime.datetime.now()}'
+        )
+
 
         try:
             metadata = boto.utils.get_instance_metadata(version='latest',timeout=30, num_retries=5)
@@ -369,17 +430,22 @@ def check_instance_role_availability(role_name, timeout):
             del instance_role['AccessKeyId']
             del instance_role['SecretAccessKey']
             del instance_role['Token']
-            LOGGER.info('SUCCESS getting instance role {}'.format(instance_role))
+            LOGGER.info(f'SUCCESS getting instance role {instance_role}')
             return True
         except KeyError as e:
-            LOGGER.info('FAILED to get instance role: {} @ {}'.format(role_name, datetime.datetime.now()))
-            pass
+            LOGGER.info(
+                f'FAILED to get instance role: {role_name} @ {datetime.datetime.now()}'
+            )
+
         next_execution_ts = next_execution_ts + SLEEP_INTERVAL_IN_SECS
         if (next_execution_ts > (start_time + timeout)):
-            LOGGER.info('TIMEOUT while checking instance role after {} seconds'.format(timeout))
+            LOGGER.info(f'TIMEOUT while checking instance role after {timeout} seconds')
             break
 
-        LOGGER.info('WAITING :{} to get instance_role:{} @ {}'.format(SLEEP_INTERVAL_IN_SECS, role_name, datetime.datetime.now()))
+        LOGGER.info(
+            f'WAITING :{SLEEP_INTERVAL_IN_SECS} to get instance_role:{role_name} @ {datetime.datetime.now()}'
+        )
+
         time.sleep(next_execution_ts - time.time())
     return False
 
